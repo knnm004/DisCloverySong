@@ -10,7 +10,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # --- CONFIGURATION ---
-API_KEY = "47b5c5c8f34a00a3c4dbef927f9cd2db"
+API_KEY = "YOUR-API-KEY"
 USER_AGENT = "DisCloverySong/1.0"
 
 # Connect to Last.fm
