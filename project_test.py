@@ -6,10 +6,10 @@ import plotly.express as px
 import random
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 import os
-from langchain_huggingface import HuggingFaceEmbeddings
 
 # --- CONFIGURATION ---
 API_KEY = "47b5c5c8f34a00a3c4dbef927f9cd2db"
@@ -17,22 +17,6 @@ USER_AGENT = "DisCloverySong/1.0"
 
 # Connect to Last.fm (Public access only)
 network = pylast.LastFMNetwork(api_key=API_KEY)
-
-TOP_TAGS = ["rock", "electronic", "electronnic", "seen live", "alternative", "pop", "indie", "female vocalists", "metal", "alternative rock", "jazz", "classic rock", "ambient", "experimental", "folk", "indie rock", "punk", "Hip-Hop", "hard rock", "black metal", "instrumental", "singer-songwriter", "dance", "80s", "death metal", "Progressive rock", "heavy metal", "hardcore", "british", "soul", "chillout", "electronica", "rap", "industrial", "punk rock", "Classical", "Soundtrack", "blues", "thrash metal", "90s", "metalcore", "psychedelic", "acoustic", "japanese", "hip hop", "post-rock", "Progressive metal", "House", "german", "techno", "new wave"]
-
-class VibeMapper:
-    def __init__(self, tag_list):
-        # Using a very popular, lightweight model: 'all-MiniLM-L6-v2'
-        # It's fast and small (only ~80MB)
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        self.vector_db = FAISS.from_texts(tag_list, self.embeddings)
-
-    def find_best_tag(self, user_query):
-        results = self.vector_db.similarity_search(user_query, k=1)
-        return results[0].page_content if results else None
-
-if "tag_mapper" not in st.session_state:
-    st.session_state.tag_mapper = VibeMapper(TOP_TAGS)
 
 # --- HELPER FUNCTIONS ---
 def get_random_song():
@@ -42,13 +26,40 @@ def get_random_song():
 
 def search_by_vibe(vibe_text): #adding agent to match the tags these are not in lastfm and use this as tool
     """Searches for tracks matching a specific tag/vibe."""
-    mapped_tag_name = st.session_state.tag_mapper.find_best_tag(vibe_text)
     # Last.fm works best with single tags (e.g., 'dreamy', 'rock')
-    tag = network.get_tag(mapped_tag_name)
+    tag = network.get_tag(vibe_text)
     tracks = tag.get_top_tracks(limit=10)
     if tracks:
         return random.choice(tracks).item
     return None
+
+TOP_TAGS = ["rock", "electronic", "electronnic", "seen live", "alternative", "pop", "indie", "female vocalists", "metal", "alternative rock", "jazz", "classic rock", "ambient", "experimental", "folk", "indie rock", "punk", "Hip-Hop", "hard rock", "black metal", "instrumental", "singer-songwriter", "dance", "80s", "death metal", "Progressive rock", "heavy metal", "hardcore", "british", "soul", "chillout", "electronica", "rap", "industrial", "punk rock", "Classical", "Soundtrack", "blues", "thrash metal", "90s", "metalcore", "psychedelic", "acoustic", "japanese", "hip hop", "post-rock", "Progressive metal", "House", "german", "techno", "new wave"]
+
+os.environ["OPENAI_API_KEY"] = "your_openai_key"
+
+class VibeMapper:
+    def __init__(self, tag_list):
+        # Initialize embeddings and a local vector database
+        self.embeddings = OpenAIEmbeddings()
+        self.vector_db = FAISS.from_texts(tag_list, self.embeddings)
+
+    def find_best_tag(self, user_query):
+        """Finds the most semantically similar tag from the top list."""
+        # Search the vector database for the top 1 match
+        results = self.vector_db.similarity_search(user_query, k=1)
+        if results:
+            return results[0].page_content
+        return None
+    
+agent = create_agent(
+    model = '',
+    tools = [search_by_vibe],
+    system_prompt = '',
+)
+
+response = agent.invoke(
+
+)
 
 def save_listening_data(track):
     """Saves metadata to a CSV for visualization."""
@@ -92,8 +103,9 @@ if "current_track" in st.session_state and st.session_state.current_track:
     st.markdown(f"[Click here to open song in YouTube]({yt_url})")
     
     #showing the metadata
+    
 
-
+    
 
     # THE "NO-SKIP" CHALLENGE
     # Since we can't lock the YouTube browser tab, we lock the app's progress.
