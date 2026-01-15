@@ -4,8 +4,6 @@ import time
 import pandas as pd
 import plotly.express as px
 import random
-from langchain.agents import create_agent
-from langchain.tools import tool
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 import os
@@ -40,15 +38,16 @@ def get_random_song():
     top_tracks = network.get_top_tracks(limit=50)
     return random.choice(top_tracks).item
 
-def search_by_vibe(vibe_text): #adding agent to match the tags these are not in lastfm and use this as tool
+def search_by_vibe(vibe_text):
     """Searches for tracks matching a specific tag/vibe."""
     mapped_tag_name = st.session_state.tag_mapper.find_best_tag(vibe_text)
     # Last.fm works best with single tags (e.g., 'dreamy', 'rock')
     tag = network.get_tag(mapped_tag_name)
     tracks = tag.get_top_tracks(limit=10)
+
     if tracks:
-        return random.choice(tracks).item
-    return None
+        return random.choice(tracks).item, mapped_tag_name
+    return None, mapped_tag_name
 
 def save_listening_data(track):
     """Saves metadata to a CSV for visualization."""
@@ -62,8 +61,8 @@ def save_listening_data(track):
     df.to_csv("history.csv", mode='a', header=not pd.io.common.file_exists("history.csv"), index=False)
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="DisCloverySong", page_icon="🎵")
-st.title("🎵 DisCloverySong")
+st.set_page_config(page_title="DisCloverySong", page_icon="🎵🍀")
+st.title("🎵 DisCloverySong 🍀")
 st.caption("The app that rediscovers the art of listening.")
 
 # Sidebar for Discovery
@@ -78,8 +77,11 @@ with st.sidebar:
         with st.spinner("Finding your song..."):
             if mode == "Random":
                 st.session_state.current_track = get_random_song()
+                st.session_state.mapped_tag = "Random"
             else:
-                st.session_state.current_track = search_by_vibe(query)
+                track, tag_used = search_by_vibe(query)
+                st.session_state.current_track = track
+                st.session_state.mapped_tag = tag_used
             st.session_state.play_start = False
 
 # --- PLAYER SECTION ---
@@ -87,6 +89,7 @@ if "current_track" in st.session_state and st.session_state.current_track:
     track = st.session_state.current_track
     st.subheader(f"Now Listening: {track.title} by {track.artist.name}")
     
+    st.markdown(f"**Mapped Vibe:** `{st.session_state.get('mapped_tag', 'N/A')}`")
     # YouTube Search Link (Helper for the user to find the audio)
     yt_url = f"https://www.youtube.com/results?search_query={track.artist.name}+{track.title}".replace(" ", "+")
     st.markdown(f"[Click here to open song in YouTube]({yt_url})")
