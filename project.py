@@ -4,24 +4,22 @@ import time
 import pandas as pd
 import plotly.express as px
 import random
-from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
 import os
+import csv
+from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # --- CONFIGURATION ---
 API_KEY = "47b5c5c8f34a00a3c4dbef927f9cd2db"
 USER_AGENT = "DisCloverySong/1.0"
 
-# Connect to Last.fm (Public access only)
+# Connect to Last.fm
 network = pylast.LastFMNetwork(api_key=API_KEY)
 
-TOP_TAGS = ["rock", "electronic", "electronnic", "seen live", "alternative", "pop", "indie", "female vocalists", "metal", "alternative rock", "jazz", "classic rock", "ambient", "experimental", "folk", "indie rock", "punk", "Hip-Hop", "hard rock", "black metal", "instrumental", "singer-songwriter", "dance", "80s", "death metal", "Progressive rock", "heavy metal", "hardcore", "british", "soul", "chillout", "electronica", "rap", "industrial", "punk rock", "Classical", "Soundtrack", "blues", "thrash metal", "90s", "metalcore", "psychedelic", "acoustic", "japanese", "hip hop", "post-rock", "Progressive metal", "House", "german", "techno", "new wave"]
+TOP_TAGS = ["rock", "electronic", "alternative", "pop", "indie", "metal", "jazz", "classic rock", "ambient", "experimental", "folk", "punk", "Hip-Hop", "hard rock", "instrumental", "singer-songwriter", "dance", "80s", "soul", "chillout", "techno", "new wave"]
 
 class VibeMapper:
     def __init__(self, tag_list):
-        # Using a very popular, lightweight model: 'all-MiniLM-L6-v2'
-        # It's fast and small (only ~80MB)
         self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
         self.vector_db = FAISS.from_texts(tag_list, self.embeddings)
 
@@ -34,38 +32,42 @@ if "tag_mapper" not in st.session_state:
 
 # --- HELPER FUNCTIONS ---
 def get_random_song():
-    """Fetches a random track from the global top chart."""
     top_tracks = network.get_top_tracks(limit=50)
     return random.choice(top_tracks).item
 
 def search_by_vibe(vibe_text):
-    """Searches for tracks matching a specific tag/vibe."""
     mapped_tag_name = st.session_state.tag_mapper.find_best_tag(vibe_text)
-    # Last.fm works best with single tags (e.g., 'dreamy', 'rock')
     tag = network.get_tag(mapped_tag_name)
-    tracks = tag.get_top_tracks(limit=10)
-
+    tracks = tag.get_top_tracks(limit=40)
+    
     if tracks:
-        return random.choice(tracks).item, mapped_tag_name
-    return None, mapped_tag_name
+        selected_item = random.choice(tracks)
+        track = selected_item.item
+        listeners = track.get_listener_count()
+        return track, mapped_tag_name, int(listeners)
+    return None, mapped_tag_name, 0
 
-def save_listening_data(track):
-    """Saves metadata to a CSV for visualization."""
+def save_listening_data(track, listener_count, liked=False):
+    playcount = track.get_playcount()
     new_data = {
         "Timestamp": [time.strftime("%Y-%m-%d %H:%M:%S")],
         "Artist": [track.artist.name],
         "Title": [track.title],
-        "Vibe_Score": [random.uniform(0, 1)] # Placeholder for Valence แก้แก้
+        "Play_Count": [playcount],
+        "Listeners": [listener_count],
+        "Liked": [liked]
     }
     df = pd.DataFrame(new_data)
-    df.to_csv("history.csv", mode='a', header=not pd.io.common.file_exists("history.csv"), index=False)
+    file_path = "history.csv"
+    file_exists = os.path.exists(file_path)
+    df.to_csv(file_path, mode='a', header=not file_exists, index=False, quoting=csv.QUOTE_NONNUMERIC)
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="DisCloverySong", page_icon="🎵🍀")
 st.title("🎵 DisCloverySong 🍀")
 st.caption("The app that rediscovers the art of listening.")
 
-# Sidebar for Discovery
+# Sidebar
 with st.sidebar:
     st.header("Discovery Settings")
     mode = st.radio("Choose Mode", ["Random", "Scope (Vibe)"])
@@ -78,56 +80,100 @@ with st.sidebar:
             if mode == "Random":
                 st.session_state.current_track = get_random_song()
                 st.session_state.mapped_tag = "Random"
+                st.session_state.current_listeners = 0
             else:
-                track, tag_used = search_by_vibe(query)
+                track, tag_used, listeners = search_by_vibe(query)
                 st.session_state.current_track = track
                 st.session_state.mapped_tag = tag_used
-            st.session_state.play_start = False
+                st.session_state.current_listeners = listeners
+            
+            # Reset states for new song
+            st.session_state.listening_finished = False
+            st.rerun()
 
 # --- PLAYER SECTION ---
 if "current_track" in st.session_state and st.session_state.current_track:
     track = st.session_state.current_track
+    
     st.subheader(f"Now Listening: {track.title} by {track.artist.name}")
-    
     st.markdown(f"**Mapped Vibe:** `{st.session_state.get('mapped_tag', 'N/A')}`")
-    # YouTube Search Link (Helper for the user to find the audio)
-    yt_url = f"https://www.youtube.com/results?search_query={track.artist.name}+{track.title}".replace(" ", "+")
-    st.markdown(f"[Click here to open song in YouTube]({yt_url})")
     
-    #showing the metadata
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        try:
+            cover_url = track.get_cover_image(3) # 3 is Extra Large
+            if cover_url:
+                st.image(cover_url, use_container_width=True)
+            else:
+                st.info("No album art found.")
+        except:
+            st.error("Image load failed.")
 
+    with col2:
+        raw_dur = track.get_duration() 
+        duration = raw_dur / 1000 if raw_dur else 180
+        m, s = divmod(int(duration), 60)
+        
+        st.write(f"⏱️ **Duration:** {m}:{s:02d}")
+        st.write(f"👥 **Listeners:** {st.session_state.get('current_listeners', 0):,}")
+        
+        search_q = f"{track.artist.name} {track.title}".replace(" ", "+")
+        st.link_button("▶️ Listen on YouTube", f"https://www.youtube.com/results?search_query={search_q}")
 
+    st.divider()
 
-    # THE "NO-SKIP" CHALLENGE
-    # Since we can't lock the YouTube browser tab, we lock the app's progress.
-    duration = 180  # Assume 3 minutes if duration is unavailable
-    
-    if not st.session_state.get("play_start", False):
+    # Listening logic
+    if not st.session_state.get("listening_finished", False):
         if st.button("I am ready to listen (No skipping allowed)"):
-            st.session_state.play_start = True
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for percent in range(100):
-                time.sleep(duration / 100) # Simulate song duration
-                progress_bar.progress(percent + 1)
-                status_text.text(f"Listening... {percent + 1}% complete")
-            
-            st.success("✅ Song Complete! Data logged to your journey.")
-            save_listening_data(track)
+            bar = st.progress(0)
+            status = st.empty()
+            step = duration / 100
+            for p in range(100):
+                time.sleep(step)
+                bar.progress(p + 1)
+                status.text(f"Listening... {p + 1}%")
+            st.session_state.listening_finished = True
+            st.rerun()
+    
+    # Post-listening logic
+    else:
+        st.success("✅ Song Complete!")
+        is_liked = st.toggle("❤️ I love this discovery!", value=False)
+        
+        if st.button("🚀 Log to Journey & Save"):
+            save_listening_data(
+                st.session_state.current_track, 
+                st.session_state.get("current_listeners", 0), 
+                liked=is_liked
+            )
+            st.balloons()
+            st.session_state.current_track = None
+            st.session_state.listening_finished = False
+            st.rerun()
 else:
-    st.info("Choose a mode in the sidebar to start your discovery.")
+    st.info("Choose a mode in the sidebar to start.")
 
-# --- DATA VISUALIZATION ---
+# --- VISUALIZATION ---
 st.divider()
 if st.checkbox("Show My Listening History"):
-    try:
+    if os.path.exists("history.csv"):
         history_df = pd.read_csv("history.csv")
-        st.write("### Your Discovery Map")
-        fig = px.scatter(history_df, x="Timestamp", y="Vibe_Score", 
-                         hover_name="Title", color="Artist",
-                         title="Listening Journey Over Time")
-        st.plotly_chart(fig)
-    except FileNotFoundError:
-        st.warning("No listening history found yet. Finish a song to see data!")
+        # Ensure Liked is string for distinct symbol mapping
+        history_df["Liked"] = history_df["Liked"].astype(str)
+        
+        fig = px.scatter(
+            history_df, x="Play_Count", y="Listeners",
+            hover_name="Title", color="Artist",
+            symbol="Liked", symbol_map={"True": "star", "False": "circle"},
+            title="Discovery Map",
+            labels={"Play_Count": "Global Plays", "Listeners": "Unique Listeners"}
+        )
+
+        for trace in fig.data:
+            if "True" in trace.name or "False" in trace.name:
+                trace.showlegend = False
+
+        fig.update_traces(marker=dict(size=14))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No history found. Listen to the songs then see your data! :D")
